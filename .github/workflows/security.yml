@@ -4,6 +4,7 @@ on:
   pull_request:
 permissions:
   contents: read
+  id-token: write
 jobs:
   security:
     runs-on: ubuntu-latest
@@ -23,6 +24,7 @@ jobs:
       - name: Compile check
         run: python -m compileall -q app.py
   build:
+    if: github.event_name == 'push'
     needs: security
     runs-on: ubuntu-latest
     steps:
@@ -30,12 +32,27 @@ jobs:
       - name: Create checksum manifest
         run: |
           sha256sum app.py requirements.txt README.md > checksum-manifest.txt
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign checksum manifest with Sigstore
+        run: |
+          cosign sign-blob --yes \
+            --bundle checksum-manifest.txt.cosign.bundle \
+            checksum-manifest.txt
+      - name: Verify checksum signature
+        run: |
+          cosign verify-blob \
+            --bundle checksum-manifest.txt.cosign.bundle \
+            --certificate-identity-regexp="^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/security.yml@" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            checksum-manifest.txt
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: build-checksums
+          name: signed-build-checksums
           path: |
             app.py
             requirements.txt
             README.md
             checksum-manifest.txt
+            checksum-manifest.txt.cosign.bundle
